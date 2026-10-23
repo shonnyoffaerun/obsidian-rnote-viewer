@@ -1,0 +1,32 @@
+{
+  "name": "obsidian-rnote-viewer",
+  "version": "1.0.0",
+  "description": "Fast, lightweight viewer and Markdown embedder for Rnote (.rnote) vector note files.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production",
+    "typecheck": "tsc --noEmit",
+    "test": "esbuild test/rnote.test.ts --bundle --platform=node --format=esm --outfile=test-bundle.mjs && node --test test-bundle.mjs && rm -f test-bundle.mjs"
+  },
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "rnote",
+    "vector",
+    "drawing",
+    "svg",
+    "handwriting"
+  ],
+  "author": "Antigravity",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "obsidian": "^1.14.4",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3"
+  }
+}

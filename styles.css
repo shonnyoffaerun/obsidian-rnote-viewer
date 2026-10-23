@@ -1,0 +1,203 @@
+/* Obsidian Rnote Viewer Styles */
+
+.rnote-view-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  background-color: var(--background-primary);
+  user-select: none;
+}
+
+.rnote-viewport {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+
+.rnote-viewport.is-dragging {
+  cursor: grabbing;
+}
+
+.rnote-viewport > svg.rnote-rendered-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+/* Floating controls toolbar inside the view */
+.rnote-floating-controls {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background-color: var(--background-secondary-alt);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 10;
+}
+
+.rnote-control-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-normal);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.15s ease;
+}
+
+.rnote-control-btn:hover {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-accent);
+}
+
+.rnote-zoom-badge {
+  font-size: 12px;
+  font-family: var(--font-monospace);
+  color: var(--text-muted);
+  min-width: 48px;
+  text-align: center;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.rnote-zoom-badge:hover {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-accent);
+}
+
+.rnote-control-separator {
+  width: 1px;
+  height: 16px;
+  background-color: var(--background-modifier-border);
+  margin: 0 2px;
+}
+
+.rnote-viewport svg .rnote-paper-sheet {
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.12));
+}
+
+/* Error banner */
+.rnote-error-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.rnote-error-icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+  color: var(--text-error);
+}
+
+.rnote-error-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-normal);
+  margin-bottom: 8px;
+}
+
+.rnote-error-message {
+  font-size: 14px;
+  font-family: var(--font-monospace);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  padding: 8px 16px;
+  border-radius: 6px;
+  max-width: 600px;
+  word-break: break-word;
+}
+
+/* Markdown Embed Styles */
+.rnote-embed-wrapper {
+  margin: 1.2em 0;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background-color: var(--background-secondary-alt);
+  overflow: hidden;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  position: relative;
+}
+
+.rnote-embed-wrapper:hover {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+.rnote-embed-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background-color: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.rnote-embed-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text-normal);
+}
+
+.rnote-embed-title:hover {
+  color: var(--text-accent);
+}
+
+.rnote-embed-action {
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background-color 0.15s;
+}
+
+.rnote-embed-action:hover {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-accent);
+}
+
+.rnote-embed-svg-container {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  cursor: pointer;
+}
+
+.rnote-embed-svg-container svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}

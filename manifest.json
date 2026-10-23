@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-rnote-viewer",
+  "name": "Rnote Viewer",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Fast, lightweight viewer and Markdown embedder for Rnote (.rnote) vector note files.",
+  "author": "Antigravity",
+  "authorUrl": "https://github.com",
+  "isDesktopOnly": false
+}
