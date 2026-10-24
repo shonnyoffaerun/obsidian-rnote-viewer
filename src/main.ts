@@ -36,13 +36,13 @@ export default class RnotePlugin extends Plugin {
     this.registerExtensions(["rnote"], VIEW_TYPE_RNOTE);
 
     // Register Markdown Post-Processor for embeds like ![[drawing.rnote]]
-    this.registerMarkdownPostProcessor(async (el, ctx) => {
-      await this.processMarkdownEmbeds(el, ctx.sourcePath);
+    this.registerMarkdownPostProcessor((el, ctx) => {
+      void this.processMarkdownEmbeds(el, ctx.sourcePath);
     });
 
     // Register codeblock processor ```rnote drawing.rnote```
-    this.registerMarkdownCodeBlockProcessor("rnote", async (source, el, ctx) => {
-      await this.processCodeBlock(source, el, ctx.sourcePath);
+    this.registerMarkdownCodeBlockProcessor("rnote", (source, el, ctx) => {
+      void this.processCodeBlock(source, el, ctx.sourcePath);
     });
 
     // Add plugin settings tab
@@ -55,7 +55,12 @@ export default class RnotePlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const loaded: unknown = await this.loadData();
+    if (typeof loaded === "object" && loaded !== null) {
+      this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+    } else {
+      this.settings = Object.assign({}, DEFAULT_SETTINGS);
+    }
   }
 
   async saveSettings(): Promise<void> {
@@ -66,7 +71,7 @@ export default class RnotePlugin extends Plugin {
   }
 
   /**
-   * Resolves a file linkpath to a TFile in the vault, with fallbacks if metadataCache hasn't indexed it.
+   * Resolves a file linkpath to a TFile in the vault using official MetadataCache APIs.
    */
   resolveRnoteFile(linkPath: string, sourcePath: string): TFile | null {
     // 1. Metadata cache resolution
@@ -77,21 +82,17 @@ export default class RnotePlugin extends Plugin {
     const byPath = this.app.vault.getAbstractFileByPath(linkPath);
     if (byPath instanceof TFile) return byPath;
 
-    // 3. Normalized vault traversal fallback
-    const cleanTarget = linkPath.split("/").pop()?.trim().toLowerCase();
-    const allFiles = this.app.vault.getFiles();
-    const found = allFiles.find((f) => {
-      if (f.extension !== "rnote") return false;
-      const fPath = f.path.toLowerCase();
-      const fName = f.name.toLowerCase();
-      return (
-        fPath === linkPath.toLowerCase() ||
-        fName === cleanTarget ||
-        f.basename.toLowerCase() === cleanTarget
-      );
-    });
+    // 3. Fallbacks if extension was omitted: e.g. "Drawing" instead of "Drawing.rnote"
+    if (!linkPath.endsWith(".rnote")) {
+      const withExt = `${linkPath}.rnote`;
+      const fromCacheExt = this.app.metadataCache.getFirstLinkpathDest(withExt, sourcePath);
+      if (fromCacheExt instanceof TFile) return fromCacheExt;
 
-    return found ?? null;
+      const byPathExt = this.app.vault.getAbstractFileByPath(withExt);
+      if (byPathExt instanceof TFile) return byPathExt;
+    }
+
+    return null;
   }
 
   /**
@@ -221,10 +222,11 @@ export default class RnotePlugin extends Plugin {
       // Header bar
       const header = wrapper.createDiv({ cls: "rnote-embed-header" });
       const titleSpan = header.createSpan({ cls: "rnote-embed-title" });
-      titleSpan.innerHTML = `✏️ <span>${file.basename}</span>`;
+      titleSpan.createSpan({ text: "✏️ " });
+      titleSpan.createSpan({ text: file.basename });
       titleSpan.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.app.workspace.getLeaf(false).openFile(file);
+        void this.app.workspace.getLeaf(false).openFile(file);
       });
 
       const openExternalBtn = header.createSpan({
@@ -242,9 +244,14 @@ export default class RnotePlugin extends Plugin {
 
       // SVG Container
       const svgContainer = wrapper.createDiv({ cls: "rnote-embed-svg-container" });
-      svgContainer.innerHTML = cached.svg;
+      const parser = new DOMParser();
+      const parsedDoc = parser.parseFromString(cached.svg, "image/svg+xml");
+      const importedSvg = parsedDoc.querySelector("svg");
+      if (importedSvg) {
+        svgContainer.appendChild(wrapper.ownerDocument.importNode(importedSvg, true));
+      }
       svgContainer.addEventListener("click", () => {
-        this.app.workspace.getLeaf(false).openFile(file);
+        void this.app.workspace.getLeaf(false).openFile(file);
       });
 
       if (!isCodeBlock) {
@@ -278,7 +285,7 @@ class RnoteSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "Rnote Viewer Settings" });
+    new Setting(containerEl).setName("Rnote Viewer Settings").setHeading();
 
     new Setting(containerEl)
       .setName("Background Mode")
@@ -322,7 +329,6 @@ class RnoteSettingTab extends PluginSettingTab {
         slider
           .setLimits(20, 500, 10)
           .setValue(this.plugin.settings.cacheCapacity)
-          .setDynamicTooltip()
           .onChange(async (val) => {
             this.plugin.settings.cacheCapacity = val;
             await this.plugin.saveSettings();
@@ -336,7 +342,7 @@ class RnoteSettingTab extends PluginSettingTab {
         btn.setButtonText("Clear Cache").onClick(() => {
           this.plugin.cache.clear();
           btn.setButtonText("Cleared!");
-          setTimeout(() => btn.setButtonText("Clear Cache"), 2000);
+          window.setTimeout(() => btn.setButtonText("Clear Cache"), 2000);
         })
       );
   }

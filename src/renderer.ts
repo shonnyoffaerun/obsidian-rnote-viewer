@@ -1,6 +1,5 @@
 import {
   AffineTransform,
-  BrushPoint,
   BrushStroke,
   ParsedRnoteDocument,
   RenderOptions,
@@ -18,7 +17,7 @@ import {
  */
 function fmt(n: number): string {
   if (Number.isInteger(n)) return n.toString();
-  return Number(n.toFixed(2)).toString();
+  return (Math.round(n * 100) / 100).toString();
 }
 
 /**
@@ -83,20 +82,21 @@ export function extractStyle(style?: StrokeStyleConfig): {
   const strokeWidth = typeof inner.stroke_width === "number" ? Math.max(0.5, inner.stroke_width) : 2.0;
   const strokeColor = colorToCss(inner.stroke_color as RnoteColor | undefined, "#222222");
   const fillColor = inner.fill_color ? colorToCss(inner.fill_color as RnoteColor) : "none";
+  const innerRec = inner as Record<string, unknown>;
   const strokeStyle =
     typeof inner.stroke_style === "string"
       ? inner.stroke_style
-      : typeof (inner as Record<string, unknown>).line_style === "string"
-      ? ((inner as Record<string, unknown>).line_style as string)
+      : typeof innerRec.line_style === "string"
+      ? innerRec.line_style
       : "solid";
   const rawCap =
-    typeof (inner as Record<string, unknown>).line_cap === "string"
-      ? ((inner as Record<string, unknown>).line_cap as string)
+    typeof innerRec.line_cap === "string"
+      ? innerRec.line_cap
       : "round";
   const lineCap = rawCap === "straight" ? "butt" : rawCap === "square" ? "square" : "round";
   const pressureCurve =
-    typeof (inner as Record<string, unknown>).pressure_curve === "string"
-      ? ((inner as Record<string, unknown>).pressure_curve as string)
+    typeof innerRec.pressure_curve === "string"
+      ? innerRec.pressure_curve
       : "linear";
 
   return { strokeWidth, strokeColor, fillColor, strokeStyle, lineCap, pressureCurve };
@@ -359,7 +359,7 @@ export function renderBrushStroke(
   tracker.addPoint(startPos[0] - halfWidth, startPos[1] - halfWidth);
   tracker.addPoint(startPos[0] + halfWidth, startPos[1] + halfWidth);
 
-  let d = `M ${fmt(startPos[0])} ${fmt(startPos[1])}`;
+  const dParts: string[] = [`M ${fmt(startPos[0])} ${fmt(startPos[1])}`];
   let currX = startPos[0];
   let currY = startPos[1];
   let hasSegments = false;
@@ -368,7 +368,7 @@ export function renderBrushStroke(
     if (seg.quadbezto?.end?.pos) {
       const end = seg.quadbezto.end.pos;
       const cp = seg.quadbezto.cp ?? end;
-      d += ` Q ${fmt(cp[0])} ${fmt(cp[1])}, ${fmt(end[0])} ${fmt(end[1])}`;
+      dParts.push(`Q ${fmt(cp[0])} ${fmt(cp[1])}, ${fmt(end[0])} ${fmt(end[1])}`);
 
       tracker.addPoint(cp[0] - halfWidth, cp[1] - halfWidth);
       tracker.addPoint(cp[0] + halfWidth, cp[1] + halfWidth);
@@ -382,9 +382,11 @@ export function renderBrushStroke(
       const end = seg.cubbezto.end.pos;
       const cp1 = seg.cubbezto.cp1 ?? end;
       const cp2 = seg.cubbezto.cp2 ?? end;
-      d += ` C ${fmt(cp1[0])} ${fmt(cp1[1])}, ${fmt(cp2[0])} ${fmt(cp2[1])}, ${fmt(end[0])} ${fmt(
-        end[1]
-      )}`;
+      dParts.push(
+        `C ${fmt(cp1[0])} ${fmt(cp1[1])}, ${fmt(cp2[0])} ${fmt(cp2[1])}, ${fmt(end[0])} ${fmt(
+          end[1]
+        )}`
+      );
 
       tracker.addPoint(cp1[0] - halfWidth, cp1[1] - halfWidth);
       tracker.addPoint(cp1[0] + halfWidth, cp1[1] + halfWidth);
@@ -400,7 +402,7 @@ export function renderBrushStroke(
       const end = seg.lineto?.end?.pos ?? seg.end?.pos ?? seg.pos;
       if (end) {
         if (Math.abs(end[0] - currX) > 0.01 || Math.abs(end[1] - currY) > 0.01) {
-          d += ` L ${fmt(end[0])} ${fmt(end[1])}`;
+          dParts.push(`L ${fmt(end[0])} ${fmt(end[1])}`);
 
           tracker.addPoint(end[0] - halfWidth, end[1] - halfWidth);
           tracker.addPoint(end[0] + halfWidth, end[1] + halfWidth);
@@ -419,6 +421,7 @@ export function renderBrushStroke(
     )}" fill="${strokeColor}" stroke="none"/>`;
   }
 
+  const d = dParts.join(" ");
   return `<path d="${d}" fill="none" stroke="${strokeColor}" stroke-width="${fmt(
     effectiveWidth
   )}" stroke-linecap="${lineCap}" stroke-linejoin="round"/>`;
@@ -689,6 +692,33 @@ export function renderTextStroke(textStroke: TextStroke, tracker: BoundingBoxTra
 }
 
 /**
+ * Clean, safe Base64 encoder without deprecated unescape or globalThis.
+ * Uses window.btoa with btoa fallback for Node test environments.
+ */
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const len = bytes.byteLength;
+  const chunkSize = 8192;
+  for (let i = 0; i < len; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
+    for (let j = 0; j < chunk.length; j++) {
+      binary += String.fromCharCode(chunk[j]);
+    }
+  }
+  if (typeof window !== "undefined" && typeof window.btoa === "function") {
+    return window.btoa(binary);
+  }
+  if (typeof btoa === "function") {
+    return btoa(binary);
+  }
+  return "";
+}
+
+function stringToBase64(str: string): string {
+  return uint8ArrayToBase64(new TextEncoder().encode(str));
+}
+
+/**
  * Converts image data into a valid data URI if possible.
  */
 function normalizeImageUri(bitmap: BitmapImage): string | null {
@@ -712,18 +742,7 @@ function normalizeImageUri(bitmap: BitmapImage): string | null {
       bytes[2] === 0x4e &&
       bytes[3] === 0x47;
     const mime = isPng ? "image/png" : "image/jpeg";
-
-    let binary = "";
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    const b64 =
-      typeof btoa !== "undefined"
-        ? btoa(binary)
-        : typeof globalThis !== "undefined" && "Buffer" in globalThis
-        ? (globalThis as unknown as { Buffer: { from(b: Uint8Array): { toString(e: string): string } } }).Buffer.from(bytes).toString("base64")
-        : "";
+    const b64 = uint8ArrayToBase64(bytes);
     return `data:${mime};base64,${b64}`;
   }
 
@@ -810,12 +829,7 @@ export function renderVectorImage(vectorImg: VectorImage, tracker: BoundingBoxTr
   ];
   tracker.addPoints(corners, matrix);
 
-  const b64 =
-    typeof btoa !== "undefined"
-      ? btoa(unescape(encodeURIComponent(vectorImg.svg_data)))
-      : typeof globalThis !== "undefined" && "Buffer" in globalThis
-      ? (globalThis as unknown as { Buffer: { from(s: string, e: string): { toString(enc: string): string } } }).Buffer.from(vectorImg.svg_data, "utf-8").toString("base64")
-      : "";
+  const b64 = stringToBase64(vectorImg.svg_data);
   const dataUri = `data:image/svg+xml;base64,${b64}`;
 
   return `<image x="${fmt(x)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(

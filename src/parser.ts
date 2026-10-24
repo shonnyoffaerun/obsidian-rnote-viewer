@@ -31,14 +31,14 @@ export async function decompressGzip(data: ArrayBuffer | Uint8Array): Promise<Ui
     // Fallback: browser / Web native DecompressionStream if available
     if (typeof DecompressionStream !== "undefined") {
       try {
-        const stream = new Response(bytes as unknown as BodyInit).body?.pipeThrough(
+        const stream = new Response(new Blob([bytes.buffer as ArrayBuffer])).body?.pipeThrough(
           new DecompressionStream("gzip")
         );
         if (stream) {
           const decompressedBuffer = await new Response(stream).arrayBuffer();
           return new Uint8Array(decompressedBuffer);
         }
-      } catch (streamErr) {
+      } catch {
         throw new Error(
           `Failed to decompress .rnote file: ${
             fflateErr instanceof Error ? fflateErr.message : String(fflateErr)
@@ -117,13 +117,13 @@ export async function parseRnoteFile(
 
   let raw: Record<string, unknown>;
   try {
-    raw = JSON.parse(jsonString);
+    const parsed: unknown = JSON.parse(jsonString);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Root JSON must be an object");
+    }
+    raw = parsed as Record<string, unknown>;
   } catch (err) {
     throw new Error(`Invalid .rnote file: Malformed JSON structure (${err})`);
-  }
-
-  if (!raw || typeof raw !== "object") {
-    throw new Error("Invalid .rnote file: Root JSON must be an object");
   }
 
   // Version extraction

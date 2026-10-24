@@ -481,14 +481,14 @@ async function decompressGzip(data) {
   } catch (fflateErr) {
     if (typeof DecompressionStream !== "undefined") {
       try {
-        const stream = new Response(bytes).body?.pipeThrough(
+        const stream = new Response(new Blob([bytes.buffer])).body?.pipeThrough(
           new DecompressionStream("gzip")
         );
         if (stream) {
           const decompressedBuffer = await new Response(stream).arrayBuffer();
           return new Uint8Array(decompressedBuffer);
         }
-      } catch (streamErr) {
+      } catch {
         throw new Error(
           `Failed to decompress .rnote file: ${fflateErr instanceof Error ? fflateErr.message : String(fflateErr)}`
         );
@@ -537,12 +537,13 @@ async function parseRnoteFile(data) {
   }
   let raw;
   try {
-    raw = JSON.parse(jsonString);
+    const parsed = JSON.parse(jsonString);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Root JSON must be an object");
+    }
+    raw = parsed;
   } catch (err2) {
     throw new Error(`Invalid .rnote file: Malformed JSON structure (${err2})`);
-  }
-  if (!raw || typeof raw !== "object") {
-    throw new Error("Invalid .rnote file: Root JSON must be an object");
   }
   const version = typeof raw.version === "string" ? raw.version : "unknown";
   const engineSnapshot = raw.engine_snapshot ?? raw.data?.engine_snapshot ?? raw.store_snapshot ?? raw.data?.store_snapshot ?? raw.data?.snapshot?.engine_snapshot ?? raw;
@@ -598,7 +599,7 @@ async function parseRnoteFile(data) {
 // src/renderer.ts
 function fmt(n) {
   if (Number.isInteger(n)) return n.toString();
-  return Number(n.toFixed(2)).toString();
+  return (Math.round(n * 100) / 100).toString();
 }
 function escapeXml(unsafe) {
   return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -629,10 +630,11 @@ function extractStyle(style) {
   const strokeWidth = typeof inner.stroke_width === "number" ? Math.max(0.5, inner.stroke_width) : 2;
   const strokeColor = colorToCss(inner.stroke_color, "#222222");
   const fillColor = inner.fill_color ? colorToCss(inner.fill_color) : "none";
-  const strokeStyle = typeof inner.stroke_style === "string" ? inner.stroke_style : typeof inner.line_style === "string" ? inner.line_style : "solid";
-  const rawCap = typeof inner.line_cap === "string" ? inner.line_cap : "round";
+  const innerRec = inner;
+  const strokeStyle = typeof inner.stroke_style === "string" ? inner.stroke_style : typeof innerRec.line_style === "string" ? innerRec.line_style : "solid";
+  const rawCap = typeof innerRec.line_cap === "string" ? innerRec.line_cap : "round";
   const lineCap = rawCap === "straight" ? "butt" : rawCap === "square" ? "square" : "round";
-  const pressureCurve = typeof inner.pressure_curve === "string" ? inner.pressure_curve : "linear";
+  const pressureCurve = typeof innerRec.pressure_curve === "string" ? innerRec.pressure_curve : "linear";
   return { strokeWidth, strokeColor, fillColor, strokeStyle, lineCap, pressureCurve };
 }
 function normalizeTransform(transform) {
@@ -807,7 +809,7 @@ function renderBrushStroke(brush, tracker, options) {
   const halfWidth = Math.max(0.18, effectiveWidth / 2);
   tracker.addPoint(startPos[0] - halfWidth, startPos[1] - halfWidth);
   tracker.addPoint(startPos[0] + halfWidth, startPos[1] + halfWidth);
-  let d = `M ${fmt(startPos[0])} ${fmt(startPos[1])}`;
+  const dParts = [`M ${fmt(startPos[0])} ${fmt(startPos[1])}`];
   let currX = startPos[0];
   let currY = startPos[1];
   let hasSegments = false;
@@ -815,7 +817,7 @@ function renderBrushStroke(brush, tracker, options) {
     if (seg.quadbezto?.end?.pos) {
       const end = seg.quadbezto.end.pos;
       const cp = seg.quadbezto.cp ?? end;
-      d += ` Q ${fmt(cp[0])} ${fmt(cp[1])}, ${fmt(end[0])} ${fmt(end[1])}`;
+      dParts.push(`Q ${fmt(cp[0])} ${fmt(cp[1])}, ${fmt(end[0])} ${fmt(end[1])}`);
       tracker.addPoint(cp[0] - halfWidth, cp[1] - halfWidth);
       tracker.addPoint(cp[0] + halfWidth, cp[1] + halfWidth);
       tracker.addPoint(end[0] - halfWidth, end[1] - halfWidth);
@@ -827,9 +829,11 @@ function renderBrushStroke(brush, tracker, options) {
       const end = seg.cubbezto.end.pos;
       const cp1 = seg.cubbezto.cp1 ?? end;
       const cp2 = seg.cubbezto.cp2 ?? end;
-      d += ` C ${fmt(cp1[0])} ${fmt(cp1[1])}, ${fmt(cp2[0])} ${fmt(cp2[1])}, ${fmt(end[0])} ${fmt(
-        end[1]
-      )}`;
+      dParts.push(
+        `C ${fmt(cp1[0])} ${fmt(cp1[1])}, ${fmt(cp2[0])} ${fmt(cp2[1])}, ${fmt(end[0])} ${fmt(
+          end[1]
+        )}`
+      );
       tracker.addPoint(cp1[0] - halfWidth, cp1[1] - halfWidth);
       tracker.addPoint(cp1[0] + halfWidth, cp1[1] + halfWidth);
       tracker.addPoint(cp2[0] - halfWidth, cp2[1] - halfWidth);
@@ -843,7 +847,7 @@ function renderBrushStroke(brush, tracker, options) {
       const end = seg.lineto?.end?.pos ?? seg.end?.pos ?? seg.pos;
       if (end) {
         if (Math.abs(end[0] - currX) > 0.01 || Math.abs(end[1] - currY) > 0.01) {
-          d += ` L ${fmt(end[0])} ${fmt(end[1])}`;
+          dParts.push(`L ${fmt(end[0])} ${fmt(end[1])}`);
           tracker.addPoint(end[0] - halfWidth, end[1] - halfWidth);
           tracker.addPoint(end[0] + halfWidth, end[1] + halfWidth);
           currX = end[0];
@@ -858,6 +862,7 @@ function renderBrushStroke(brush, tracker, options) {
       halfWidth
     )}" fill="${strokeColor}" stroke="none"/>`;
   }
+  const d = dParts.join(" ");
   return `<path d="${d}" fill="none" stroke="${strokeColor}" stroke-width="${fmt(
     effectiveWidth
   )}" stroke-linecap="${lineCap}" stroke-linejoin="round"/>`;
@@ -1063,6 +1068,27 @@ function renderTextStroke(textStroke, tracker) {
     fontSize
   )}" fill="${color}"${transformStr}>${tspans}</text>`;
 }
+function uint8ArrayToBase64(bytes) {
+  let binary = "";
+  const len = bytes.byteLength;
+  const chunkSize = 8192;
+  for (let i2 = 0; i2 < len; i2 += chunkSize) {
+    const chunk = bytes.subarray(i2, Math.min(i2 + chunkSize, len));
+    for (let j = 0; j < chunk.length; j++) {
+      binary += String.fromCharCode(chunk[j]);
+    }
+  }
+  if (typeof window !== "undefined" && typeof window.btoa === "function") {
+    return window.btoa(binary);
+  }
+  if (typeof btoa === "function") {
+    return btoa(binary);
+  }
+  return "";
+}
+function stringToBase64(str) {
+  return uint8ArrayToBase64(new TextEncoder().encode(str));
+}
 function normalizeImageUri(bitmap) {
   const rawData = bitmap.image?.data ?? bitmap.data;
   if (!rawData) return null;
@@ -1077,12 +1103,7 @@ function normalizeImageUri(bitmap) {
     const bytes = rawData instanceof Uint8Array ? rawData : new Uint8Array(rawData);
     const isPng = bytes.length > 4 && bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71;
     const mime = isPng ? "image/png" : "image/jpeg";
-    let binary = "";
-    const len = bytes.byteLength;
-    for (let i2 = 0; i2 < len; i2++) {
-      binary += String.fromCharCode(bytes[i2]);
-    }
-    const b64 = typeof btoa !== "undefined" ? btoa(binary) : typeof globalThis !== "undefined" && "Buffer" in globalThis ? globalThis.Buffer.from(bytes).toString("base64") : "";
+    const b64 = uint8ArrayToBase64(bytes);
     return `data:${mime};base64,${b64}`;
   }
   return null;
@@ -1145,7 +1166,7 @@ function renderVectorImage(vectorImg, tracker) {
     [x2, y + h]
   ];
   tracker.addPoints(corners, matrix);
-  const b64 = typeof btoa !== "undefined" ? btoa(unescape(encodeURIComponent(vectorImg.svg_data))) : typeof globalThis !== "undefined" && "Buffer" in globalThis ? globalThis.Buffer.from(vectorImg.svg_data, "utf-8").toString("base64") : "";
+  const b64 = stringToBase64(vectorImg.svg_data);
   const dataUri = `data:image/svg+xml;base64,${b64}`;
   return `<image x="${fmt(x2)}" y="${fmt(y)}" width="${fmt(w)}" height="${fmt(
     h
@@ -1412,6 +1433,7 @@ var RnoteView = class extends import_obsidian.FileView {
   currentStrokeWidthScale;
   penThicknessBtn = null;
   resizeObserver = null;
+  rafPending = false;
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
@@ -1528,7 +1550,7 @@ var RnoteView = class extends import_obsidian.FileView {
       const svgDeltaY = dy * (this.currentViewHeight / rect.height);
       this.currentViewMinX -= svgDeltaX;
       this.currentViewMinY -= svgDeltaY;
-      this.applyViewBox();
+      this.scheduleApplyViewBox();
       const instVx = svgDeltaX / dt * 1e3;
       const instVy = svgDeltaY / dt * 1e3;
       this.velocityX = this.velocityX * 0.3 + instVx * 0.7;
@@ -1605,7 +1627,7 @@ var RnoteView = class extends import_obsidian.FileView {
           const svgDeltaY = dy * (this.currentViewHeight / rect.height);
           this.currentViewMinX -= svgDeltaX;
           this.currentViewMinY -= svgDeltaY;
-          this.applyViewBox();
+          this.scheduleApplyViewBox();
           const instVx = svgDeltaX / dt * 1e3;
           const instVy = svgDeltaY / dt * 1e3;
           this.velocityX = this.velocityX * 0.3 + instVx * 0.7;
@@ -1635,7 +1657,6 @@ var RnoteView = class extends import_obsidian.FileView {
     });
     this.viewportEl.addEventListener("dblclick", (e) => {
       if (e.target.closest(".rnote-floating-controls")) return;
-      const rect = this.viewportEl.getBoundingClientRect();
       const isWidthFitted = Math.abs(this.currentViewWidth - this.baseWidth * 1.08) < 50;
       if (isWidthFitted) {
         this.zoomToFit();
@@ -1674,16 +1695,16 @@ var RnoteView = class extends import_obsidian.FileView {
       this.velocityY *= decay;
       this.applyViewBox();
       if (Math.hypot(this.velocityX, this.velocityY) > 15) {
-        this.momentumAnimId = requestAnimationFrame(step);
+        this.momentumAnimId = window.requestAnimationFrame(step);
       } else {
         this.stopMomentum();
       }
     };
-    this.momentumAnimId = requestAnimationFrame(step);
+    this.momentumAnimId = window.requestAnimationFrame(step);
   }
   stopMomentum() {
     if (this.momentumAnimId !== null) {
-      cancelAnimationFrame(this.momentumAnimId);
+      window.cancelAnimationFrame(this.momentumAnimId);
       this.momentumAnimId = null;
     }
     this.velocityX = 0;
@@ -1725,12 +1746,19 @@ var RnoteView = class extends import_obsidian.FileView {
       this.baseHeight = Math.max(1, parts[3] || cached.height || 600);
       const prevViewBox = this.svgEl ? this.svgEl.getAttribute("viewBox") : null;
       this.viewportEl.empty();
-      this.viewportEl.innerHTML = cached.svg;
-      this.svgEl = this.viewportEl.querySelector("svg");
+      const parser = new DOMParser();
+      const parsedDoc = parser.parseFromString(cached.svg, "image/svg+xml");
+      const importedSvg = parsedDoc.querySelector("svg");
+      if (importedSvg) {
+        this.svgEl = this.viewportEl.ownerDocument.importNode(importedSvg, true);
+        this.viewportEl.appendChild(this.svgEl);
+      } else {
+        this.svgEl = null;
+      }
       if (prevViewBox && this.svgEl) {
         this.svgEl.setAttribute("viewBox", prevViewBox);
       } else {
-        requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
           this.fitToWidth();
         });
       }
@@ -1743,7 +1771,19 @@ var RnoteView = class extends import_obsidian.FileView {
     if (this.viewportEl) this.viewportEl.empty();
     this.svgEl = null;
     this.parsedDoc = null;
-    super.onUnloadFile(file);
+    await super.onUnloadFile(file);
+  }
+  /**
+   * Throttles viewBox DOM updates to monitor refresh rate (60/120Hz)
+   * eliminating layout thrashing during continuous drag/swipe gestures.
+   */
+  scheduleApplyViewBox() {
+    if (this.rafPending) return;
+    this.rafPending = true;
+    window.requestAnimationFrame(() => {
+      this.rafPending = false;
+      this.applyViewBox();
+    });
   }
   /**
    * Applies the current view coordinates to the SVG's viewBox directly,
@@ -1864,7 +1904,7 @@ var RnoteView = class extends import_obsidian.FileView {
     if (this.file) {
       const cacheKey = `${this.file.path}:${this.file.stat.mtime}:${this.currentBackgroundMode}:${this.currentStrokeWidthScale}`;
       this.plugin.cache.delete(cacheKey);
-      this.onLoadFile(this.file);
+      void this.onLoadFile(this.file);
     }
   }
   getPenScaleLabel(scale) {
@@ -1882,9 +1922,9 @@ var RnoteView = class extends import_obsidian.FileView {
       this.penThicknessBtn.textContent = this.getPenScaleLabel(this.currentStrokeWidthScale);
     }
     this.plugin.settings.strokeWidthScale = this.currentStrokeWidthScale;
-    this.plugin.saveSettings();
+    void this.plugin.saveSettings();
     if (this.file) {
-      this.onLoadFile(this.file);
+      void this.onLoadFile(this.file);
     }
   }
   showError(msg) {
@@ -1924,11 +1964,11 @@ var RnotePlugin = class extends import_obsidian2.Plugin {
       (leaf) => new RnoteView(leaf, this)
     );
     this.registerExtensions(["rnote"], VIEW_TYPE_RNOTE);
-    this.registerMarkdownPostProcessor(async (el, ctx) => {
-      await this.processMarkdownEmbeds(el, ctx.sourcePath);
+    this.registerMarkdownPostProcessor((el, ctx) => {
+      void this.processMarkdownEmbeds(el, ctx.sourcePath);
     });
-    this.registerMarkdownCodeBlockProcessor("rnote", async (source, el, ctx) => {
-      await this.processCodeBlock(source, el, ctx.sourcePath);
+    this.registerMarkdownCodeBlockProcessor("rnote", (source, el, ctx) => {
+      void this.processCodeBlock(source, el, ctx.sourcePath);
     });
     this.addSettingTab(new RnoteSettingTab(this.app, this));
   }
@@ -1936,7 +1976,12 @@ var RnotePlugin = class extends import_obsidian2.Plugin {
     this.cache.clear();
   }
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const loaded = await this.loadData();
+    if (typeof loaded === "object" && loaded !== null) {
+      this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+    } else {
+      this.settings = Object.assign({}, DEFAULT_SETTINGS);
+    }
   }
   async saveSettings() {
     await this.saveData(this.settings);
@@ -1945,22 +1990,21 @@ var RnotePlugin = class extends import_obsidian2.Plugin {
     }
   }
   /**
-   * Resolves a file linkpath to a TFile in the vault, with fallbacks if metadataCache hasn't indexed it.
+   * Resolves a file linkpath to a TFile in the vault using official MetadataCache APIs.
    */
   resolveRnoteFile(linkPath, sourcePath) {
     const fromCache = this.app.metadataCache.getFirstLinkpathDest(linkPath, sourcePath);
     if (fromCache instanceof import_obsidian2.TFile) return fromCache;
     const byPath = this.app.vault.getAbstractFileByPath(linkPath);
     if (byPath instanceof import_obsidian2.TFile) return byPath;
-    const cleanTarget = linkPath.split("/").pop()?.trim().toLowerCase();
-    const allFiles = this.app.vault.getFiles();
-    const found = allFiles.find((f) => {
-      if (f.extension !== "rnote") return false;
-      const fPath = f.path.toLowerCase();
-      const fName = f.name.toLowerCase();
-      return fPath === linkPath.toLowerCase() || fName === cleanTarget || f.basename.toLowerCase() === cleanTarget;
-    });
-    return found ?? null;
+    if (!linkPath.endsWith(".rnote")) {
+      const withExt = `${linkPath}.rnote`;
+      const fromCacheExt = this.app.metadataCache.getFirstLinkpathDest(withExt, sourcePath);
+      if (fromCacheExt instanceof import_obsidian2.TFile) return fromCacheExt;
+      const byPathExt = this.app.vault.getAbstractFileByPath(withExt);
+      if (byPathExt instanceof import_obsidian2.TFile) return byPathExt;
+    }
+    return null;
   }
   /**
    * Processes all .rnote embeds found inside a rendered Markdown document.
@@ -2054,10 +2098,11 @@ var RnotePlugin = class extends import_obsidian2.Plugin {
       }
       const header = wrapper.createDiv({ cls: "rnote-embed-header" });
       const titleSpan = header.createSpan({ cls: "rnote-embed-title" });
-      titleSpan.innerHTML = `\u270F\uFE0F <span>${file.basename}</span>`;
+      titleSpan.createSpan({ text: "\u270F\uFE0F " });
+      titleSpan.createSpan({ text: file.basename });
       titleSpan.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.app.workspace.getLeaf(false).openFile(file);
+        void this.app.workspace.getLeaf(false).openFile(file);
       });
       const openExternalBtn = header.createSpan({
         cls: "rnote-embed-action",
@@ -2072,9 +2117,14 @@ var RnotePlugin = class extends import_obsidian2.Plugin {
         }
       });
       const svgContainer = wrapper.createDiv({ cls: "rnote-embed-svg-container" });
-      svgContainer.innerHTML = cached.svg;
+      const parser = new DOMParser();
+      const parsedDoc = parser.parseFromString(cached.svg, "image/svg+xml");
+      const importedSvg = parsedDoc.querySelector("svg");
+      if (importedSvg) {
+        svgContainer.appendChild(wrapper.ownerDocument.importNode(importedSvg, true));
+      }
       svgContainer.addEventListener("click", () => {
-        this.app.workspace.getLeaf(false).openFile(file);
+        void this.app.workspace.getLeaf(false).openFile(file);
       });
       if (!isCodeBlock) {
         targetEl.replaceWith(wrapper);
@@ -2103,7 +2153,7 @@ var RnoteSettingTab = class extends import_obsidian2.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Rnote Viewer Settings" });
+    new import_obsidian2.Setting(containerEl).setName("Rnote Viewer Settings").setHeading();
     new import_obsidian2.Setting(containerEl).setName("Background Mode").setDesc("Choose how the canvas background is rendered for .rnote files").addDropdown(
       (dropdown) => dropdown.addOption("adaptive", "Adaptive (Match Obsidian Theme)").addOption("rnote-native", "Rnote Native (Document colors & paper pattern)").addOption("transparent", "Transparent").addOption("light", "Always Light").addOption("dark", "Always Dark").setValue(this.plugin.settings.backgroundMode).onChange(async (value) => {
         this.plugin.settings.backgroundMode = value;
@@ -2119,7 +2169,7 @@ var RnoteSettingTab = class extends import_obsidian2.PluginSettingTab {
       })
     );
     new import_obsidian2.Setting(containerEl).setName("Cache Capacity").setDesc("Maximum number of rendered SVG drawings to keep in memory for instant loading").addSlider(
-      (slider) => slider.setLimits(20, 500, 10).setValue(this.plugin.settings.cacheCapacity).setDynamicTooltip().onChange(async (val) => {
+      (slider) => slider.setLimits(20, 500, 10).setValue(this.plugin.settings.cacheCapacity).onChange(async (val) => {
         this.plugin.settings.cacheCapacity = val;
         await this.plugin.saveSettings();
       })
@@ -2128,7 +2178,7 @@ var RnoteSettingTab = class extends import_obsidian2.PluginSettingTab {
       (btn) => btn.setButtonText("Clear Cache").onClick(() => {
         this.plugin.cache.clear();
         btn.setButtonText("Cleared!");
-        setTimeout(() => btn.setButtonText("Clear Cache"), 2e3);
+        window.setTimeout(() => btn.setButtonText("Clear Cache"), 2e3);
       })
     );
   }

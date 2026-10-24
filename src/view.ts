@@ -53,6 +53,7 @@ export class RnoteView extends FileView {
   private currentStrokeWidthScale: number;
   private penThicknessBtn: HTMLElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private rafPending = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: RnotePlugin) {
     super(leaf);
@@ -203,7 +204,7 @@ export class RnoteView extends FileView {
 
       this.currentViewMinX -= svgDeltaX;
       this.currentViewMinY -= svgDeltaY;
-      this.applyViewBox();
+      this.scheduleApplyViewBox();
 
       // Velocity in SVG units per second with exponential moving average
       const instVx = (svgDeltaX / dt) * 1000;
@@ -302,7 +303,7 @@ export class RnoteView extends FileView {
 
           this.currentViewMinX -= svgDeltaX;
           this.currentViewMinY -= svgDeltaY;
-          this.applyViewBox();
+          this.scheduleApplyViewBox();
 
           const instVx = (svgDeltaX / dt) * 1000;
           const instVy = (svgDeltaY / dt) * 1000;
@@ -336,7 +337,6 @@ export class RnoteView extends FileView {
     // 4. Double-click toggles between Fit to Width and Fit Whole Page
     this.viewportEl.addEventListener("dblclick", (e: MouseEvent) => {
       if ((e.target as HTMLElement).closest(".rnote-floating-controls")) return;
-      const rect = this.viewportEl.getBoundingClientRect();
       const isWidthFitted = Math.abs(this.currentViewWidth - this.baseWidth * 1.08) < 50;
       if (isWidthFitted) {
         this.zoomToFit();
@@ -388,18 +388,18 @@ export class RnoteView extends FileView {
       this.applyViewBox();
 
       if (Math.hypot(this.velocityX, this.velocityY) > 15) {
-        this.momentumAnimId = requestAnimationFrame(step);
+        this.momentumAnimId = window.requestAnimationFrame(step);
       } else {
         this.stopMomentum();
       }
     };
 
-    this.momentumAnimId = requestAnimationFrame(step);
+    this.momentumAnimId = window.requestAnimationFrame(step);
   }
 
   private stopMomentum(): void {
     if (this.momentumAnimId !== null) {
-      cancelAnimationFrame(this.momentumAnimId);
+      window.cancelAnimationFrame(this.momentumAnimId);
       this.momentumAnimId = null;
     }
     this.velocityX = 0;
@@ -450,13 +450,20 @@ export class RnoteView extends FileView {
 
       const prevViewBox = this.svgEl ? this.svgEl.getAttribute("viewBox") : null;
       this.viewportEl.empty();
-      this.viewportEl.innerHTML = cached.svg;
-      this.svgEl = this.viewportEl.querySelector("svg");
+      const parser = new DOMParser();
+      const parsedDoc = parser.parseFromString(cached.svg, "image/svg+xml");
+      const importedSvg = parsedDoc.querySelector("svg");
+      if (importedSvg) {
+        this.svgEl = this.viewportEl.ownerDocument.importNode(importedSvg, true);
+        this.viewportEl.appendChild(this.svgEl);
+      } else {
+        this.svgEl = null;
+      }
 
       if (prevViewBox && this.svgEl) {
         this.svgEl.setAttribute("viewBox", prevViewBox);
       } else {
-        requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
           this.fitToWidth();
         });
       }
@@ -470,7 +477,20 @@ export class RnoteView extends FileView {
     if (this.viewportEl) this.viewportEl.empty();
     this.svgEl = null;
     this.parsedDoc = null;
-    super.onUnloadFile(file);
+    await super.onUnloadFile(file);
+  }
+
+  /**
+   * Throttles viewBox DOM updates to monitor refresh rate (60/120Hz)
+   * eliminating layout thrashing during continuous drag/swipe gestures.
+   */
+  private scheduleApplyViewBox(): void {
+    if (this.rafPending) return;
+    this.rafPending = true;
+    window.requestAnimationFrame(() => {
+      this.rafPending = false;
+      this.applyViewBox();
+    });
   }
 
   /**
@@ -616,7 +636,7 @@ export class RnoteView extends FileView {
     if (this.file) {
       const cacheKey = `${this.file.path}:${this.file.stat.mtime}:${this.currentBackgroundMode}:${this.currentStrokeWidthScale}`;
       this.plugin.cache.delete(cacheKey);
-      this.onLoadFile(this.file);
+      void this.onLoadFile(this.file);
     }
   }
 
@@ -638,10 +658,10 @@ export class RnoteView extends FileView {
     }
 
     this.plugin.settings.strokeWidthScale = this.currentStrokeWidthScale;
-    this.plugin.saveSettings();
+    void this.plugin.saveSettings();
 
     if (this.file) {
-      this.onLoadFile(this.file);
+      void this.onLoadFile(this.file);
     }
   }
 

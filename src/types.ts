@@ -234,8 +234,8 @@ export interface StrokeComponent {
 // Document background & layout definitions
 export interface DocumentBackground {
   color?: RnoteColor;
-  pattern?: "none" | "dots" | "grid" | "lines" | string;
-  pattern_size?: number;
+  pattern?: "none" | "dots" | "grid" | "lines" | (string & {});
+  pattern_size?: number | [number, number];
   pattern_color?: RnoteColor;
 }
 
